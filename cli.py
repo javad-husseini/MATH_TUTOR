@@ -4,7 +4,6 @@ The RTL transformation is presentation-only. User input and model answers stay
 in their original logical Unicode order inside the application.
 """
 
-
 from __future__ import annotations
 
 import os
@@ -109,7 +108,8 @@ def main() -> None:
     print("=" * 52)
     print("MATH_TUTOR | Complex Mathematics Tutor Agent")
     display("سؤال یا مفهوم ریاضی را بنویسید.", fix_rtl=fix_rtl)
-    print("/help: Help | /exit: Exit | /file <path>: Read UTF-8 question")
+    print("/help: Help | /exit: Exit | /file <path>: UTF-8 input")
+    print("/knowledge: Known concepts | /skip: Skip a diagnostic")
     print("=" * 52)
 
     # Delayed import means --display-test needs no AvalAI API key.
@@ -138,6 +138,15 @@ def main() -> None:
             print("Example: x^2 - 5x + 6 = 0")
             print("If Persian input appears reversed, write it in a UTF-8")
             print("text file and enter: /file question.txt")
+            print("Use /knowledge to list previously confirmed concepts.")
+            print("During a short diagnostic, type /skip if you do not know.")
+            continue
+        if question.lower() == "/knowledge":
+            try:
+                known = agent.known_concepts()
+                print("Known concepts: " + (", ".join(known) if known else "(none yet)"))
+            except Exception as exc:
+                print(f"Knowledge error ({type(exc).__name__}): {exc}")
             continue
         if question.lower().startswith("/file "):
             try:
@@ -146,20 +155,40 @@ def main() -> None:
                 print(f"File input error: {exc}")
                 continue
 
+        exit_requested = False
         try:
-            result = agent.ask(question)
+            thread_id, result = agent.start_question(question)
+            while result.get("__interrupt__"):
+                payload = result["__interrupt__"][0].value
+                print("\n[Diagnostic: " + payload["concept_name"] + "]")
+                display(payload["question"], fix_rtl=fix_rtl)
+                display("پاسخ کوتاه بنویس، یا /skip را وارد کن.", fix_rtl=fix_rtl)
+                try:
+                    diagnostic_answer = input("Your answer > ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    exit_requested = True
+                    break
+                if diagnostic_answer.lower() in {"/exit", "/quit"}:
+                    exit_requested = True
+                    break
+                result = agent.resume_question(thread_id, diagnostic_answer)
         except Exception as exc:
             print(f"Agent error ({type(exc).__name__}): {exc}")
             continue
 
+        if exit_requested:
+            print("\nGoodbye!")
+            break
+
         print(
             f"\n[Route: {result['intent']} | "
             f"Topic: {result['math_topic']} | "
-            f"Depth: {result['explanation_depth']}]"
+            f"Depth: {result['explanation_depth']} | "
+            f"Diagnostics: {result['assessment_count']}]"
         )
         print("\nTutor >")
         display(result["final_answer"], fix_rtl=fix_rtl)
-        print("\n[Phase 1: Mathematical verification is not enabled yet.]")
+        print("\n[Phase 2: Independent mathematical verification is not enabled yet.]")
 
 
 if __name__ == "__main__":
